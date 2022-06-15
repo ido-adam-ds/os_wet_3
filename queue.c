@@ -2,6 +2,7 @@
 // Created by Iddo Petrank on 13/06/2022.
 //
 #include "queue.h"
+#include "segel.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/time.h>
@@ -103,7 +104,9 @@ void removeIndex(Queue queue, int index)
     for(int i = 0; i < index; i++)
         temp = temp->next;
 
+
     Node to_delete = temp->next;
+    close(to_delete->fd);
     temp->next = to_delete->next;
     free(to_delete);
     queue->curr_size--;
