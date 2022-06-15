@@ -15,6 +15,11 @@ LIBS = -lpthread
 all: server client output.cgi
 	-mkdir -p public
 	-cp output.cgi favicon.ico home.html public
+	$(CC) $(CFLAGS) -o client client.o segel.o
+
+output.cgi: output.c
+	$(CC) $(CFLAGS) -o output.cgi output.c
+
 
 server: server.o request.o segel.o queue.o
 	$(CC) $(CFLAGS) -o server server.o request.o segel.o queue.o $(LIBS)
@@ -22,11 +27,8 @@ server: server.o request.o segel.o queue.o
 client: client.o segel.o
 	$(CC) $(CFLAGS) -o client client.o segel.o
 
-output.cgi: output.c
-	$(CC) $(CFLAGS) -o output.cgi output.c
-
-queue: queue.o
-	$(CC) $(CFLAGS) -o queue
+queue: queue.o segel.o
+	$(CC) $(CFLAGS) -o queue queue.o segel.o
 .c.o:
 	$(CC) $(CFLAGS) -o $@ -c $<
 
