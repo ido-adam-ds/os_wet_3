@@ -43,7 +43,7 @@ int timeval_subtract (struct timeval *result, struct timeval *x, struct timeval 
         y->tv_sec -= nsec;
     }
 
-    /* Compute the time remaining to wait.
+    /* Compute the time remaining to .
        tv_usec is certainly positive. */
     result->tv_sec = x->tv_sec - y->tv_sec;
     result->tv_usec = x->tv_usec - y->tv_usec;
@@ -61,6 +61,7 @@ int* dynamic_thread_count;
 int* total_thread_count;
 
 
+
 Queue wait_queue = NULL;
 Queue worker_queue = NULL;
 
@@ -74,13 +75,13 @@ void getargs(int *port, int argc, char *argv[], int* threads_num, int* queue_siz
     *port = atoi(argv[1]);
     *threads_num = atoi(argv[2]);
     *queue_size = atoi(argv[3]);
-    if(strcmp(argv[4], "block"))
+    if(strcmp(argv[4], "block") == 0)
         *schedalg = BLOCK;
-    else if(strcmp(argv[4], "dt"))
+    else if(strcmp(argv[4], "dt") == 0)
         *schedalg = DT;
-    else if(strcmp(argv[4], "dh"))
+    else if(strcmp(argv[4], "dh") == 0)
         *schedalg = DH;
-    else if(strcmp(argv[4], "random"))
+    else if(strcmp(argv[4], "random") == 0)
         *schedalg = RANDOM;
 
 }
@@ -89,10 +90,15 @@ void getargs(int *port, int argc, char *argv[], int* threads_num, int* queue_siz
 
 void* thread_func(void *args)
 {
+	int* temp = (int*) args;
+	int index = *temp;
+//	printf("index: %d\n", index);
+
     while(1){
         pthread_mutex_lock(&m);
         while (queueEmpty(wait_queue))
             pthread_cond_wait(&worker_cond, &m);
+	//printf("about to handle\n");
         struct timeval arrive = queueHeadArrivalTime(wait_queue);
         int fd = dequeue(wait_queue);
         enqueue(worker_queue, fd);
@@ -101,11 +107,12 @@ void* thread_func(void *args)
         struct timeval end, dispatch;
         gettimeofday(&end, NULL);
         timeval_subtract(&dispatch, &end, &arrive);
-        requestHandle(fd, (int*)(args), dynamic_thread_count, static_thread_count, total_thread_count, arrive, dispatch);
+        requestHandle(fd, index, dynamic_thread_count, static_thread_count, total_thread_count, arrive, dispatch);
         close(fd);
 
+
         pthread_mutex_lock(&m);
-        removeValue(wait_queue, fd);
+        removeValue(worker_queue, fd);
         pthread_cond_signal(&master_cond);
         pthread_mutex_unlock(&m);
     }
@@ -114,23 +121,39 @@ void* thread_func(void *args)
 
 
 
-int main(int argc, char *args[])
+int main(int argc, char *argv[])
 {
-    char* argv[] = {"./server", "3452", "8", "16", "dt"};
-    argc = 5;
+
     srand(time(0));
     int listenfd, connfd, port, clientlen, threads_num, queue_size;
     struct sockaddr_in clientaddr;
     sched_algo schealg;
 
+
     getargs(&port, argc, argv, &threads_num, &queue_size, &schealg);
     wait_queue = queueCreate(queue_size);
     worker_queue = queueCreate(queue_size);
 
+
+    // 
+    // HW3: Create some threads...
+    //
+	int indexes[threads_num];
+    for(int i = 0; i < threads_num; i++){
+        indexes[i] = i;
+    }
+ 
+    pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t)*threads_num);
+    for(int i = 0; i < threads_num; i++){
+
+       
+        pthread_create(&threads[i], NULL, thread_func, (void*)(&indexes[i]));//TODO create thread func that handles requests
+    }
     dynamic_thread_count = (int*) malloc(sizeof(int)*threads_num);
     static_thread_count = (int*) malloc(sizeof(int)*threads_num);
     total_thread_count = (int*) malloc(sizeof(int)*threads_num);
-    int indexes[threads_num];
+    
+
 
     for(int i = 0; i < threads_num; i++){
         dynamic_thread_count[i] = 0;
@@ -139,74 +162,127 @@ int main(int argc, char *args[])
         indexes[i] = i;
     }
 
-
-    //printf("port: %d,  threads_num: %d, queue_size: %d, schedalg: %d\n", port, threads_num, queue_size, schealg);
-    // 
-    // HW3: Create some threads...
-    //
-    pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t)*threads_num);
-    for(int i = 0; i < threads_num; i++){
-
-        int num;
-        int* arg = &num;
-        *arg = i;
-        pthread_create(&threads[i], NULL, thread_func, (void*)arg);//TODO create thread func that handles requests
-    }
-
-
-
-
     //TODO intiate locks
     pthread_mutex_init(&m, NULL);
     pthread_cond_init(&worker_cond, NULL);
     pthread_cond_init(&master_cond, NULL);
 
 
-   // printf("listeninij\n");
     listenfd = Open_listenfd(port);
+   // int i = 0;
     while (1) {
+      //  printf("infinte loop: %d\n", i);
+	//i++;
         clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, (socklen_t *) &clientlen);;
+        connfd = Accept(listenfd, (SA *)&clientaddr, (socklen_t *) &clientlen);
+      //  printf("cought\n");
 
         //
         // HW3: In general, don't handle the request in the main thread.
         // Save the relevant info in a buffer and have one of the worker threads
         // do the work.
         //
+
         pthread_mutex_lock(&m);
-        if(schealg == BLOCK)
+	    if(queueSize(wait_queue)+queueSize(worker_queue) >= queue_size)
+		{
+			if(schealg == BLOCK)
+			{
+				while (queueSize(wait_queue)+queueSize(worker_queue) >= queue_size)
+                	pthread_cond_wait(&master_cond, &m);
+			}
+			else if(schealg == RANDOM)
+			{
+				if(queueEmpty(wait_queue))
+				{
+                	close(connfd);
+                	pthread_mutex_unlock(&m);
+                	continue;
+				}
+				else {
+					queueDropRandom(wait_queue);
+				}
+			}
+			else if(schealg == DT)
+			{
+               	close(connfd);
+               	pthread_mutex_unlock(&m);
+                continue;
+			}
+			else if(schealg == DH)
+			{
+				if(queueEmpty(wait_queue))
+				{
+                	close(connfd);
+                	pthread_mutex_unlock(&m);
+                	continue;
+				}
+				else{
+					close(dequeue(wait_queue));		
+				}
+			}	
+		}
+							
+			
+			
+       
+/* if(schealg == BLOCK)
         {
-            while (queueSize(wait_queue)+ queueSize(worker_queue) >= queue_size)
+            while (queueSize(wait_queue)+queueSize(worker_queue) == queue_size)
                 pthread_cond_wait(&master_cond, &m);
             enqueue(wait_queue, connfd);
+            pthread_cond_signal(&worker_cond);
         }
         else if(schealg == RANDOM)
         {
-            if(queueSize(wait_queue)+ queueSize(worker_queue) >= queue_size)
-                queueDropRandom(worker_queue);
+            if(queueSize(wait_queue)+queueSize(worker_queue) == queue_size){
+				if(queueEmpty(wait_queue))
+				{
+                	close(connfd);
+                	pthread_mutex_unlock(&m);
+                	continue;
+				}
+                queueDropRandom(wait_queue);
+			}
             enqueue(wait_queue, connfd);
+            pthread_cond_signal(&worker_cond);
         }
         else if(schealg == DT)
         {
-            if(queueSize(wait_queue)+ queueSize(worker_queue) >= queue_size)
-                dropTail(worker_queue);
+            if(queueSize(wait_queue)+queueSize(worker_queue) == queue_size)
+				{
+                	close(connfd);
+                	pthread_mutex_unlock(&m);
+                	continue;
+				}
             enqueue(wait_queue, connfd);
+            pthread_cond_signal(&worker_cond);
         }
         else if(schealg == DH)
         {
-            if(queueSize(wait_queue)+ queueSize(worker_queue) >= queue_size)
+            if(queueSize(wait_queue)+queueSize(worker_queue) == queue_size)
             {
-                close(connfd);
-                pthread_mutex_unlock(&m);
-                continue;
+				if(queueSize(wait_queue) == 0)
+				{
+                	close(connfd);
+                	pthread_mutex_unlock(&m);
+                	continue;
+				}
+				else{
+					close(dequeue(wait_queue));
+				}
             }
-            enqueue(wait_queue, connfd);
-        }
+
+        }*/
+      //  pthread_cond_signal(&worker_cond);
+        enqueue(wait_queue, connfd);
         pthread_cond_signal(&worker_cond);
         pthread_mutex_unlock(&m);
+  //  	printf("end\n");
 
 
     }
+    
 
 }
 
